@@ -1,1 +1,1 @@
-# life2
+Discontinued project
