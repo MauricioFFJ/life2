@@ -1,0 +1,76 @@
+name: (Comando) Trocar roupa
+
+on:
+  workflow_dispatch:
+    inputs:
+      contas:
+        description: "Números das contas de 1 a 50 (ex. 1, 2, 7)"
+        type: string
+        required: false
+      todas:
+        description: "Todas as contas"
+        type: boolean
+        default: false
+      roupa:
+        description: "Posição da roupa no guarda-roupa (1 a 30)"
+        required: true
+        type: number
+
+
+permissions:
+  contents: write
+
+jobs:
+  enviar-comando:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validar e publicar comando na fila
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const inputs = context.payload.inputs || {};
+            const posicao = Number(inputs.roupa);
+            if (!Number.isInteger(posicao) || posicao < 1 || posicao > 30) {
+              core.setFailed('Informe uma posição de 1 a 30.');
+              return;
+            }
+            let contas;
+            if (inputs.todas === true || inputs.todas === 'true') {
+              contas = Array.from({ length: 50 }, (_, i) => i + 1);
+            } else {
+              const lista = String(inputs.contas || '').split(',').map(valor => valor.trim());
+              if (lista.some(valor => !/^\d+$/.test(valor) || Number(valor) < 1 || Number(valor) > 50)) {
+                core.setFailed('Informe contas de 1 a 50 separadas por vírgula ou marque Todas as contas.');
+                return;
+              }
+              contas = [...new Set(lista.map(Number))];
+            }
+            const runId = process.env.GITHUB_RUN_ID;
+            const runAttempt = process.env.GITHUB_RUN_ATTEMPT || '1';
+            if (!runId) {
+              core.setFailed('Não foi possível obter GITHUB_RUN_ID.');
+              return;
+            }
+            const id = `${runId}-${runAttempt}`;
+            const comando = {
+              id,
+              action: 'change_outfit',
+              outfit_slot: posicao,
+              targets: contas,
+              created_at: new Date().toISOString(),
+            };
+            const caminho = `commands/${id}.json`;
+            const branch = context.ref.replace('refs/heads/', '');
+
+            await github.rest.repos.createOrUpdateFileContents({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              path: caminho,
+              message: `TROCAR ROUPA: publicar comando ${id}`,
+              content: Buffer.from(JSON.stringify(comando, null, 2)).toString('base64'),
+              branch,
+            });
+
+            core.info(`Posição da roupa: ${posicao}`);
+            core.info(`Contas selecionadas: ${contas.join(', ')}`);
+            core.info(`Arquivo: ${caminho}`);

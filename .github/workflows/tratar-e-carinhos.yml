@@ -1,0 +1,107 @@
+name: (Comando) Tratar e Carinhos
+
+on:
+  workflow_dispatch:
+    inputs:
+      contas:
+        description: "Números das contas de 1 a 50 (ex. 1, 2, 7)"
+        type: string
+        required: false
+      todas:
+        description: "Todas as contas"
+        type: boolean
+        default: false
+  schedule:
+    - cron: "0 3 * * *"
+      timezone: "America/Sao_Paulo"
+
+# O cron dispara diariamente às 03h em Brasília.
+# Para publicar comandos automáticos, habilite a variável de repositório:
+# TRATAR_CARINHOS_AUTO = true
+# E defina as contas automáticas em:
+# TRATAR_CARINHOS_GRUPOS = 1,2,7 (também aceita 01-05,06-10 ou todos)
+# Com AUTO diferente de 'true', a execução agendada fica ignorada.
+permissions:
+  contents: write
+
+jobs:
+  publicar-comando-tratar-carinhos:
+    if: ${{ github.event_name != 'schedule' || vars.TRATAR_CARINHOS_AUTO == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validar e publicar TRATAR E CARINHOS
+        uses: actions/github-script@v7
+        env:
+          GRUPOS_AUTO: ${{ vars.TRATAR_CARINHOS_GRUPOS }}
+        with:
+          script: |
+            const inputs = context.payload.inputs || {};
+            const agendado = context.eventName === 'schedule';
+            let selecao = inputs;
+            if (agendado) {
+              const config = String(process.env.GRUPOS_AUTO || '').trim().toLowerCase();
+              if (!config) {
+                core.setFailed('Defina TRATAR_CARINHOS_GRUPOS para o agendamento.');
+                return;
+              }
+              const tokens = config.split(/[,;\s]+/).filter(Boolean);
+              const numeros = [];
+              for (const token of tokens) {
+                if (token === 'todos') continue;
+                const faixa = /^(\d{2})-(\d{2})$/.exec(token);
+                if (faixa) {
+                  const inicio = Number(faixa[1]);
+                  const fim = Number(faixa[2]);
+                  if (inicio < 1 || inicio % 5 !== 1 || fim !== inicio + 4 || fim > 50) {
+                    core.setFailed(`Grupo automático inválido: ${token}`);
+                    return;
+                  }
+                  for (let n = inicio; n <= fim; n++) numeros.push(n);
+                } else if (/^\d+$/.test(token) && Number(token) >= 1 && Number(token) <= 50) {
+                  numeros.push(Number(token));
+                } else {
+                  core.setFailed(`Conta ou grupo automático inválido: ${token}`);
+                  return;
+                }
+              }
+              selecao = { contas: [...new Set(numeros)].sort((a, b) => a - b).join(', '), todas: String(tokens.includes('todos')) };
+            }
+            let contas;
+            if (selecao.todas === true || selecao.todas === 'true') {
+              contas = Array.from({ length: 50 }, (_, i) => i + 1);
+            } else {
+              const lista = String(selecao.contas || '').split(',').map(valor => valor.trim());
+              if (lista.some(valor => !/^\d+$/.test(valor) || Number(valor) < 1 || Number(valor) > 50)) {
+                core.setFailed('Informe contas de 1 a 50 separadas por vírgula ou marque Todas as contas.');
+                return;
+              }
+              contas = [...new Set(lista.map(Number))];
+            }
+            const runId = process.env.GITHUB_RUN_ID;
+            const attempt = process.env.GITHUB_RUN_ATTEMPT || '1';
+            if (!runId) {
+              core.setFailed('GITHUB_RUN_ID indisponível.');
+              return;
+            }
+            const id = `${runId}-${attempt}`;
+            const comando = {
+              id,
+              action: 'treat_pets',
+              targets: contas,
+              created_at: new Date().toISOString(),
+            };
+            const caminho = `commands/${id}.json`;
+            const branch = context.ref.replace(/^refs\/heads\//, '');
+
+            await github.rest.repos.createOrUpdateFileContents({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              path: caminho,
+              message: `TRATAR E CARINHOS: publicar comando ${id}`,
+              content: Buffer.from(JSON.stringify(comando, null, 2)).toString('base64'),
+              branch,
+            });
+            core.info(`TRATAR E CARINHOS publicado: ${id}`);
+            core.info(`Origem: ${agendado ? 'agendamento 03h Brasília' : 'execução manual'}`);
+            core.info(`Contas selecionadas: ${contas.join(', ')}`);
+            core.info(`Arquivo: ${caminho}`);

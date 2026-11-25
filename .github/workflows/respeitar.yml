@@ -1,0 +1,77 @@
+name: (Comando) Respeitar
+
+on:
+  workflow_dispatch:
+    inputs:
+      nome_usuario:
+        description: "Nome EXATO do personagem que receberá os respeitos"
+        required: true
+        type: string
+      contas:
+        description: "Números das contas de 1 a 50 (ex. 1, 2, 7)"
+        type: string
+        required: false
+      todas:
+        description: "Todas as contas"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  publicar-comando-respeitar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validar e publicar comando RESPEITAR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const inputs = context.payload.inputs || {};
+            const nomeUsuario = String(inputs.nome_usuario || '').trim();
+            if (!nomeUsuario || nomeUsuario.length > 60 || /[\r\n]/.test(nomeUsuario)) {
+              core.setFailed('Informe um nome de personagem válido, sem quebras de linha (máximo 60 caracteres).');
+              return;
+            }
+
+            let contas;
+            if (inputs.todas === true || inputs.todas === 'true') {
+              contas = Array.from({ length: 50 }, (_, i) => i + 1);
+            } else {
+              const lista = String(inputs.contas || '').split(',').map(valor => valor.trim());
+              if (lista.some(valor => !/^\d+$/.test(valor) || Number(valor) < 1 || Number(valor) > 50)) {
+                core.setFailed('Informe contas de 1 a 50 separadas por vírgula ou marque Todas as contas.');
+                return;
+              }
+              contas = [...new Set(lista.map(Number))];
+            }
+            const runId = process.env.GITHUB_RUN_ID;
+            const attempt = process.env.GITHUB_RUN_ATTEMPT || '1';
+            if (!runId) {
+              core.setFailed('GITHUB_RUN_ID indisponível.');
+              return;
+            }
+            const id = `${runId}-${attempt}`;
+            const comando = {
+              id,
+              action: 'respect',
+              target_name: nomeUsuario,
+              targets: contas,
+              created_at: new Date().toISOString(),
+            };
+            const caminho = `commands/${id}.json`;
+            const branch = context.ref.replace(/^refs\/heads\//, '');
+
+            await github.rest.repos.createOrUpdateFileContents({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              path: caminho,
+              message: `RESPEITAR: comando ${id} para ${nomeUsuario}`,
+              content: Buffer.from(JSON.stringify(comando, null, 2)).toString('base64'),
+              branch,
+            });
+
+            core.info(`RESPEITAR publicado: ${id}`);
+            core.info(`Usuário escolhido: ${nomeUsuario}`);
+            core.info(`Contas selecionadas: ${contas.join(', ')}`);
+            core.info(`Arquivo: ${caminho}`);
